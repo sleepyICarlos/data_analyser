@@ -1,0 +1,398 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Nov 20 15:31:57 2017
+
+@author: hartz
+"""
+import numpy as np
+import os
+import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
+
+
+"""this script is optimized for reading in data taken from hysteretic sweeps taken with IHT Probe station, 
+402 data points in total (201 per sweep direction, 0.1 V spacing)"""
+
+
+data_folder = "Z:\sciebo\ZnSe\M12-0084\IHT Probestation\D1\Stripes\data"
+#"D:\documents\sciebo\ZnSe\M12-0084\IHT Probestation\D1\Stripes\data" #-path for home office
+save_folder = "Z:\sciebo\promotion\6_LogsDataAnalysis\1_data\IHT_probe_station\0084\doped_stripes\python"
+folder=data_folder
+
+start_name = "3-2-18"
+sample_name = "D1 "
+structure_name= "Stripes"
+save_name = "sample " + sample_name+ " 250° anneal "+structure_name
+figure_comment ="sample "+ sample_name+ " Stripes" + "\n1 $\mu$m ZnSe + 170 nm Al ($ex-situ$)\nAl+Cl doped\nafter annealing at 250°C for 3 min"
+x_label="bias voltage (V)"
+y_label="photocurrent (nA)"
+separator = "_"
+file_identifier = structure_name
+export_name = sample_name +" " + structure_name
+end_name = ".txt" #or ".dat"
+plot_fit_output= False
+save = True
+
+#%%
+"""data import"""
+
+def import_data():
+    data, voltages, values, zdata, files =[], [], [], [], []     #pad distance: any param read from file name
+    measurement_counter = 0
+    measurement_description = []
+    for file in os.listdir(folder):
+        if file.startswith(start_name):
+            if file.endswith(end_name):
+                contents = file.split(separator)    
+                l = len(contents)
+                measurement_counter += 1
+                zdata_value = measurement_counter
+                measurement_description.append(contents[l-2]+" "+ contents[l-1].split(".")[0])
+                
+    
+                zdata.append(zdata_value)
+                files.append(file)
+                new_value=np.genfromtxt(folder+"\\"+file,usecols=0, skip_header=1).astype(float)
+                new_value*= 1e9             #convert from mA to nA
+                values.append(np.concatenate((np.array([zdata_value]),new_value)))       # skip_header: skips device names, usecol: uses 2nd column (current)
+    
+    values.sort(key=lambda x: x[0])
+    #values=np.array(values)*1e6 #convert to nA 
+    zdata.sort()
+    file_list = files
+    print("%d files imported successfully:" %(len(files)) )
+    print(files)
+    voltages = np.concatenate((np.array([0]),np.genfromtxt(folder+"\\"+files[0],usecols=1, skip_header = 1))) 
+    data = np.vstack((voltages,values))
+    data_labels= measurement_description
+    return data, file_list, zdata, data_labels
+
+#%% #plotting
+def plot(data, data_labels, axes_labels = ["x-dim (XD)", "photocurrent (nA)"], text_pos=[-10, 40]):
+    fig, ax = plt.subplots()
+    ax.set_ylabel(axes_labels[0]), ax.set_xlabel(axes_labels[1])
+    x=data[0][1:]  
+    ax.text(text_pos[0], text_pos[1], figure_comment)
+    for i in np.arange(len(files)):
+        ax.plot(x, data[i+1][1:], "-", linewidth=0.5)
+        ax.legend(data_labels, fontsize=6, loc = "best")
+    
+    plt.title(save_name)
+        
+        
+    if save:
+        fig.savefig(save_name +"_data.pdf", format="pdf")
+        
+        
+
+#%%
+def plot_zoom(data, zdata, number_of_points, sweep_direction, legend="", text_coordinates=[-1, 0.05]):
+    fig, ax = plt.subplots()
+    #define data, adjust number of points for up- down sweep resp.
+    x=data[0][1:]
+    l = int(number_of_points/2)
+    if sweep_direction==0:    
+        x_0 = int(len(x)/4)+1
+    else:
+        x_0 = int(len(x)*3/4)+1
+    x_1 = int(x_0-l-1)
+    x_2= int(x_0+l)
+    x=x[x_1:x_2]
+    for i in np.arange(len(data)-1):
+        ax.plot(x, data[i+1][x_1:x_2], "-", linewidth=0.5)
+
+    #labeling
+    if sweep_direction==0:
+        zoom_save_name= save_name + "_up-sweep"
+        comment= figure_comment+"\nup-sweep"
+    else:
+        zoom_save_name= save_name + "_down-sweep"
+        comment= figure_comment+"\ndown_sweep" 
+
+    ax.text(text_coordinates[0], text_coordinates[1], comment)
+    ax.legend(legend, loc = "lower right")
+    ax.set_xlabel(x_label)
+    ax.set_ylabel("current (nA)")
+    #plt.title("ZnSe sample x.x")
+    if save:
+        fig.savefig(zoom_save_name +"_zoom.pdf", format="pdf")
+
+#%% data analysis
+""" my fitting function for extracting the slope around 0 V,
+polynomial of deg 3."""
+def poly_3(x, a, b, c, d):
+    result = a * x**3 + b*x**2 +c*x +d
+    return result
+
+def poly_5(x, a, b, c, d, e, f):
+    result = a * x**5 + b*x**4 +c * x**3 + d*x**2 +e*x +f
+    return result
+
+def poly_7(x, a, b, c, d, e, f, g, h):
+    result = a * x**7 + b*x**6 +c * x**5 + d*x**4 +e * x**3 + f*x**2 +g*x +h
+    return result
+
+func=poly_3
+
+"""fits my fit function to the data, returns data which is called by
+'compute_conductances(...)' later."""
+def fit_linear_zoom_with_errors(data, measurement_index, fit_points, sweep_direction, legend, output = plot_fit_output):        #fit_points == number of fitpoints, # sweep_direction== 0, 1 for up and downsweep, respectively
+    #fitting
+    fit_points=int(fit_points/2)-1
+    voltages=data[0][1:]
+    #identify values around 0 V
+    if sweep_direction==0:
+        x_length = int(len(voltages)/4+1)
+        x_index_1, x_index_2= x_length-fit_points, x_length+fit_points
+    else:
+        x_length = int(len(voltages)*3/4)
+        x_index_1, x_index_2= x_length-fit_points-1, x_length+fit_points+2
+    
+    x=voltages[x_index_1:x_index_2]  #define data
+    y=data[measurement_index][x_index_1:x_index_2]
+    
+
+    popt, pcov = curve_fit(func, x, y)
+    perr = np.sqrt(np.diag(pcov))
+    slope, slope_error =popt[2], perr[2]#to do , N-1 for poly_N
+    #plotting
+    if output:
+        fig, ax = plt.subplots()
+        ax.plot(x, func(x, *popt), "g-", label = "fit")
+        ax.plot(x, y, "b.", label = "y-data")
+        ax.legend(loc="best")
+        comment= "slope "+ str(round(slope, 5)) +" nA/V \n R = " + str(round(1/slope, 0)) +" G$\Omega$"
+        label_index=int(data[measurement_index][0])-1
+        print("label_index %d"  %(label_index))
+        plt.title(save_name+", " +legend[label_index]) 
+        plt.text(0,0, comment)
+        ax.set_xlabel(x_label)
+        ax.set_ylabel("current (nA)")
+        plt.show()
+        
+        if save:
+            fig.savefig(save_name + legend[label_index] + "_lin_fit.pdf", format="pdf")
+            
+    return slope, slope_error
+
+
+#%% 
+def process_data(zdata, fit_points, legend, output = plot_fit_output):
+    resistances=[]
+    R_err= []
+    G=[]
+    G_err =[]   #conductance_error
+    for i in range(np.shape(data)[0]):
+        if i>=1:
+            slope_up  =  fit_linear_zoom_with_errors(data, i, fit_points, 0, legend, output)
+            slope_down = fit_linear_zoom_with_errors(data, i, fit_points, 1, legend, output)
+            resistances.append(np.abs(1/slope_up[0]))
+            resistances.append(np.abs(1/slope_down[0]))
+            R_err.append(np.abs(1/slope_up[0]**2*slope_up[1]))
+            R_err.append(np.abs(1/slope_down[0]**2*slope_down[1]))
+            G.append(slope_up[0])
+            G.append(slope_down[0])
+            G_err.append(slope_up[1])
+            G_err.append(slope_down[1])
+    #init variables        
+    resistance_data=[]
+    R_err_data=[]
+    conductance_data=[]
+    G_err_data=[]
+    #reshape variables
+    resistances= np.reshape(resistances, (len(zdata),2))
+    R_err= np.reshape(R_err, (len(zdata),2))
+    G = np.reshape(G, (len(zdata), 2))
+    G_err= np.reshape(G_err, (len(zdata),2))
+    
+    zdata=np.transpose(zdata)
+    resistance_data=np.vstack((zdata, np.transpose(resistances)))
+    R_err_data=np.vstack((zdata, np.transpose(R_err)))
+    conductance_data=np.vstack((zdata, np.transpose(G)))
+    G_err_data=np.vstack((zdata, np.transpose(G_err)))
+    
+    #plot resistances
+    if output:
+        fig, ax = plt.subplots()
+        ax.set_xlabel("measurement nr.")
+        ax.set_ylabel("R (G$\Omega$)")
+        ax.legend(legend, loc = "lower right")
+        plt.plot(resistance_data[1], ".", label="up-sweep"),plt.plot(resistance_data[2], ".", label="down-sweep")  
+    
+    return resistance_data, R_err_data, conductance_data, G_err_data
+    
+        
+#%% 
+def plot_I_max(conductance_data, data, zdata):
+    fig, ax = plt.subplots()
+    I_min = data.transpose()[1]
+    I_max=data.transpose()[-1]
+    I_max=(I_min+I_max)/2*-1
+    I_max=I_max[1:]
+    ax.plot(conductance_data[0], I_max, "o") 
+    plt.xlabel("measurement number") #plt.xlabel("contact spacing (um)")
+    plt.ylabel("averaged current at -10 V (nA)")  
+    plt.title(save_name+" maximal current")
+    if save:
+        fig.savefig(save_name + "_maximal_current.pdf", format="pdf") 
+#%%               
+#def plot_I_max_normalized(conductance_data, data, zdata):
+#    fig, ax = plt.subplots()
+#    I_min = data.transpose()[1]
+#    I_max=data.transpose()[-1]
+#    I_max=(I_min+I_max)/2*-1
+#    I_max=I_max[1:]/I_max[1+1]
+#    ax.plot(conductance_data[0], I_max, "o") 
+#    plt.xlabel("measurement number") #plt.xlabel("contact spacing (um)")
+#    plt.ylabel("averaged current at -10 V (nA)")  
+#    plt.title(save_name+" maximal current")
+#    if save:
+#        fig.savefig(save_name + "_maximal_current.pdf", format="pdf") 
+#        
+#def plot_conductance_normalized(conductance_data, zdata):
+#    fig, ax = plt.subplots()
+#    ax.plot(conductance_data[0], conductance_data[1]/conductance_data[1][0], "o")   
+#    ax.plot(conductance_data[0], conductance_data[2]/conductance_data[1][0], "o")
+#    ax.legend(["up-sweep","down-sweep"], loc = "upper left")  
+#    plt.xlabel("measurement number") #plt.xlabel("contact spacing (um)")
+#    plt.ylabel("conductance (1/GOhm)")  
+#    plt.title(save_name+" conductances")
+#    if save:
+#        fig.savefig(save_name + "_conductances.pdf", format="pdf")  
+
+#%% 
+"""plot all min/max values of current and the corresponding conductance around 
+0 V in one plot, show deviation from the normalization to conductance"""
+#to to on 22-3-2018
+def plot_all_normalized(conductance_data, data, zdata, norm_index, 
+                        legend_txt, text_coordinates):  #norm_index mind 1, data == raw U-I data
+    
+    # define data, select starting and ending points, average 2 values for 
+    #I_min/I_max, define I_0, G_0 for normalizing the data
+    I_min_1 = data.transpose()[1]
+    I_min_2=data.transpose()[-1]
+    I_min=(I_min_1+I_min_2)/2
+    I_min=I_min[1:]
+    I_0= np.abs(I_min[norm_index])
+    I_min=np.abs(I_min_1[1:]/I_0)
+
+    l=int(np.floor(np.shape(data)[1]/2))
+    I_max_1 = data.transpose()[l]
+    I_max_2=data.transpose()[l+1]
+    I_max=(I_max_1+I_max_2)/2
+    I_max=I_max[1:]
+    I_max=I_max_1[1:]/I_0
+    
+    #normalizing I by comparing to an conductance value (that one of norm_index)
+    I_min_norm=I_min/conductance_data[1]
+    I_max_norm=I_max/conductance_data[2]
+    I_min_norm=I_min_norm/np.average(I_min_norm)
+    I_max_norm=I_max_norm/np.average(I_max_norm)
+    #deviation in %
+    I_min_norm_deviation=100-(I_min_norm)*100 
+    I_max_norm_deviation=100-(I_max_norm)*100 
+
+    G_0=conductance_data[1][norm_index]
+    conversion_factor= I_0/G_0
+
+    #plotting
+    fig, ax= plt.subplots()
+    x=conductance_data[0]
+    ax.plot(x, I_max_norm_deviation, ".", x, I_min_norm_deviation, ".")
+    ax.set_xlabel("measurement number"), ax.set_ylabel("deviation (%)")
+    plt.ylim(-100, 100)
+    plt.title(save_name+"\nrelative current deviation at 10 V from G-predicted values")
+    if save:
+        fig.savefig(save_name + "_I_deviation.pdf", format="pdf")  
+        
+    #plotting
+    fig, ax = plt.subplots()
+    ax.plot(x, I_max, ".", x, I_min, ".")#, "o", "x") 
+    ax.plot(conductance_data[0], conductance_data[1]/G_0, ".")   
+    ax.plot(conductance_data[0], conductance_data[2]/G_0, ".")
+    figure_comment = r'conversion factor = %d A$\cdot \Omega$' % conversion_factor
+    ax.text(text_coordinates[0], text_coordinates[1],figure_comment)
+    ax.legend(legend_txt, loc = "upper left")  
+    ax.set_xlabel("measurement number") #plt.xlabel("contact spacing (um)")
+    ax.set_ylabel("current, conductance (normalized)")  
+    plt.title(save_name+"\nI, G normalized to measurement %d" %(norm_index+1))
+    if save:
+        fig.savefig(save_name + "_I_G_norm.pdf", format="pdf")  
+#%%  
+def export_data():
+    np.savetxt(export_name+"_conductances.csv", conductance_data)
+    np.savetxt(export_name+"_data.csv",data)
+    np.savetxt(export_name+"_resistances.csv",resistance_data)
+#%% 
+def plot_resistance_results(resistance_data, resistance_error_data):
+    fig = plt.figure(0)
+    x = resistance_data[0]
+    y1, y1_err = resistance_data[1], resistance_error_data[1]
+    y2, y2_err = resistance_data[2], resistance_error_data[2]
+    plt.errorbar(x, y1, yerr=y1_err, label ="up-sweep", marker=".", linestyle="None")
+    plt.errorbar(x, y2, yerr=y2_err, label ="down-sweep", marker=".", linestyle="None")
+    plt.ylim(0, 250)
+    plt.xlabel("measurement number") #plt.xlabel("contact spacing (um)")
+    plt.ylabel("R (G$\Omega$)")
+    plt.title(save_name+", R")
+
+    if save:
+        fig.savefig(save_name + " G.pdf", format="pdf")
+
+#%%
+def error_bar_plot(data, err, data_label, axes_label, save_name, y_limits, markersize=8, capsize=20):
+    fig, ax = plt.subplots()
+    x = data[0]
+    y1, y1_err = data[1], err[1]
+    y2, y2_err = data[2], err[2]
+    ax.errorbar(x, y1, yerr=y1_err, label=data_label[0], marker=".", linestyle="None", markersize=markersize, capsize=capsize)
+    ax.errorbar(x, y2, yerr=y2_err, label=data_label[1], marker=".", linestyle="None", markersize=markersize, capsize=capsize)
+    ax.set_ylim(y_limits)
+    plt.legend(data_label)
+    plt.title(save_name)
+    ax.set_xlabel(axes_label[0]),  ax.set_ylabel(axes_label[1])
+    																					
+
+    if save:
+        fig.savefig(save_name + ".pdf", format="pdf")
+
+
+#%%
+"""Here the import, plotting, fitting happens with the helper functions
+from above"""
+data, files, stripe_nr, labels = import_data()
+plot_zoom(data, stripe_nr,  20, 0), plot_zoom(data, stripe_nr,  20, 1)
+plot(data, labels, axes_labels=["photocurrent (nA)", "bias voltage (V)"], text_pos=[-10, 30]) 
+
+
+
+
+
+
+data_label, axes_label,  =["up-sweep", "down-sweep"], ["measurement number", "$R$ (G$\Omega$)"]
+limits =[0, 100] #limits for y data, here R_max=250 GOhm
+R_save_name = save_name+", resistances"
+
+(resistance_data,
+     resistance_error_data,
+     conductance_data,
+     conductance_error_data) =   (process_data(stripe_nr, 30, labels, output=plot_fit_output))
+
+def fit_N_points(N):
+    (resistance_data,
+     resistance_error_data,
+     conductance_data,
+     conductance_error_data) =   (process_data(stripe_nr, N, labels, output=plot_fit_output))
+    
+    error_bar_plot(resistance_data, resistance_error_data, data_label, axes_label, R_save_name+" %d" %50, limits, markersize=5, capsize=3)
+
+#for crating the plot landscapes in onenote
+#for i in range(16):
+#    i=10+2*i
+#    print("number of fit_points= %d" %i )
+#    fit_N_points(i)
+#    
+
+#plot_I_max_normalized(conductance_data, data, zdata)
+plot_all_normalized(conductance_data, data, stripe_nr, 10, ["|I$_\mathrm{min}$|", "|I$_\mathrm{max}$|", "G, up-sweep","G, down-sweep"], [1,2])
+export_data()
