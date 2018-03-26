@@ -35,6 +35,7 @@ class sample_set():
         self.names   = names
         self.structure = structure
         self.T_anneal= T_anneal
+        self.figure_comment = data_set_fig_comment("all", structure, "variable temperatures", implanted=implanted)
         if implanted:
             self.implanted=implanted
         else:
@@ -49,8 +50,6 @@ class sample_set():
         self.A_err=[]
         self.circ=[]
         self.circ_err=[]
-        
-        
 
 undoped, doped = sample_set(), sample_set()
 
@@ -61,21 +60,34 @@ class data_set():
         implanted=sample_set.implanted
         export_name = sample_name +" " + structure
         data = import_data(folder)
-        if implanted:
-            figure_comment ="sample %s %s\n1 $\mu$m ZnSe + 170 nm Al ($ex-situ$)\nAl+Cl implantation at 1 keV\nafter annealing at %d °C for 3 min" %(sample_name, structure, T_anneal)
-        else:
-            figure_comment ="sample %s %s\n1 $\mu$m ZnSe + 170 nm Al ($ex-situ$)\nno implantation\nafter annealing at %d °C for 3 min" %(sample_name, structure, T_anneal)
+        figure_comment = fig_comment(sample_name, structure, T_anneal, implanted=implanted)
         self.sample_name = sample_name
         self.save_name = "sample %s %d °C anneal %s" %(sample_name, T_anneal , structure)
         self.export_name = export_name
         self.folder = folder
         self.data = data
         self.T_anneal = T_anneal
+        self.sample_name = sample_set
         self.figure_comment=figure_comment
         sample_set.folders.append(folder)
         sample_set.names.append(sample_name)
         sample_set.T_anneal.append(T_anneal)
         sample_set.data.append(data)
+
+#%%
+def fig_comment(sample_name, structure, T_anneal, implanted=True):
+    if implanted:
+        figure_comment ="sample %s %s\n1 $\mu$m ZnSe + 170 nm Al ($ex-situ$)\nAl+Cl implantation at 1 keV\nafter annealing at %d °C for 3 min" %(sample_name, structure, T_anneal)
+    else:
+        figure_comment ="sample %s %s\n1 $\mu$m ZnSe + 170 nm Al ($ex-situ$)\nno implantation\nafter annealing at %d °C for 3 min" %(sample_name, structure, T_anneal)
+    return figure_comment
+
+def data_set_fig_comment(sample_name, structure, T_anneal, implanted=True):
+    if implanted:
+        figure_comment ="sample %s %s\n1 $\mu$m ZnSe + 170 nm Al ($ex-situ$)\nAl+Cl implantation at 1 keV\nafter annealing at %s for 3 min" %(sample_name, structure, T_anneal)
+    else:
+        figure_comment ="sample %s %s\n1 $\mu$m ZnSe + 170 nm Al ($ex-situ$)\nno implantation\nafter annealing at %s for 3 min" %(sample_name, structure, T_anneal)
+    return figure_comment
 
 #%%
 def import_data(folder, end_name=".txt", separator="_", office=True):
